@@ -1,0 +1,150 @@
+#Bibliotecas
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+from scipy import ndimage
+from scipy import optimize
+import numpy as np
+import math
+
+
+def imagemGreyscale(img):
+    return np.mean(img[:,:,:2], 2)
+
+
+#Transformações
+
+#Reduzir o tamanho da imagem
+def reduzir(img, fator):
+    reduzido = np.zeros((img.shape[0] // fator, img.shape[1] // fator))
+    for i in range(reduzido.shape[0]):
+        for j in range(reduzido.shape[1]):
+            reduzido[i,j] = np.mean(img[i*fator:(i+1)*fator,j*fator:(j+1)*fator])
+    return reduzido
+
+
+#Rotacionar imagem
+def rotacionar(img, angulo):
+    return ndimage.rotate(img, angulo, reshape=False)
+
+
+#Girar imagem
+def girar(img, direcao):
+    return img[::direcao,:]
+
+
+#Aplicar as alterações
+def aplicarMudanca(img, direcao, angulo, contraste=1.0, brilho=0.0):
+    return contraste*rotate(girar(img, direcao), angulo) + brilho
+
+
+#Contraste e Brilho
+def contrasteBrilho(D, S):
+    # Ajustar contraste and the brilho
+    A = np.concatenate((np.ones((S.size, 1)), np.reshape(S, (S.size, 1))), axis=1)
+    b = np.reshape(D, (D.size,))
+    x, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
+    return x[1], x[0]
+
+
+#Compressão para imagens em greyscale
+def gerarBlocos(img, tamanhoOriginal, tamanhoDestino, passo):
+    fator = tamanhoOriginal // tamanhoDestino
+    blocoTransformado = []
+    for k in range((img.shape[0] - tamanhoOriginal) // passo + 1):
+        for l in range((img.shape[1] - tamanhoOriginal) // passo + 1):
+            #Extrair o bloco originar e reduzir ao tamanho do bloco de destino
+            S = reduzir(img[k*passo:k*passo+tamanhoOriginal,l*passo:l*passo+tamanhoOriginal], fator)
+            #Gerar todos os blocos transformados possíveis
+            for direcao, angulo in parametros:
+                blocoTransformado.append((k, l, direcao, angulo, aplicarMudanca(S, direcao, angulo)))
+    return blocoTransformado
+
+
+#Compressão
+def compressao(img, tamanhoOriginal, tamanhoDestino, passo):
+    transformacoes = []
+    blocoTransformado = gerarBlocos(img, tamanhoOriginal, tamanhoDestino, passo)
+    i_count = img.shape[0] // tamanhoDestino
+    j_count = img.shape[1] // tamanhoDestino
+    for i in range(i_count):
+        transformacoes.append([])
+        for j in range(j_count):
+            print("{}/{} ; {}/{}".format(i, i_count, j, j_count))
+            transformacoes[i].append(None)
+            min_d = float('inf')
+            #Extrair o bloco de destino
+            D = img[i*tamanhoDestino:(i+1)*tamanhoDestino,j*tamanhoDestino:(j+1)*tamanhoDestino]
+            #Testar todas as possíveis transformações e escolher a que melhor se encaixa
+            for k, l, direcao, angulo, S in blocoTransformado:
+                contraste, brilho = contrasteBrilho(D, S)
+                S = contraste*S + brilho
+                d = np.sum(np.square(D - S))
+                if d < min_d:
+                    min_d = d
+                    transformacoes[i][j] = (k, l, direcao, angulo, contraste, brilho)
+    return transformacoes
+
+
+#Descompressão
+def descompressao(transformacoes, tamanhoOriginal, tamanhoDestino, passo, nb_iter=8):
+    fator = tamanhoOriginal // tamanhoDestino
+    altura = len(transformacoes) * tamanhoDestino
+    largura = len(transformacoes[0]) * tamanhoDestino
+    iteracoes = [np.random.randint(0, 256, (altura, largura))]
+    cur_img = np.zeros((altura, largura))
+    for i_iter in range(nb_iter):
+        print(i_iter)
+        for i in range(len(transformacoes)):
+            for j in range(len(transformacoes[i])):
+                #Aplicar alteração
+                k, l, girar, angulo, contraste, brilho = transformacoes[i][j]
+                S = reduzir(iteracoes[-1][k*passo:k*passo+tamanhoOriginal,l*passo:l*passo+tamanhoOriginal], fator)
+                D = aplicarMudanca(S, girar, angulo, contraste, brilho)
+                cur_img[i*tamanhoDestino:(i+1)*tamanhoDestino,j*tamanhoDestino:(j+1)*tamanhoDestino] = D
+        iteracoes.append(cur_img)
+        cur_img = np.zeros((altura, largura))
+    return iteracoes
+
+
+#Plotar
+def plotar_iteracoes(iteracoes, target=None):
+    # Configurar
+    plt.figure()
+    nb_row = math.ceil(np.sqrt(len(iteracoes)))
+    nb_cols = nb_row
+    # Plotar
+    for i, img in enumerate(iteracoes):
+        plt.subplot(nb_row, nb_cols, i+1)
+        plt.imshow(img, cmap='gray', vmin=0, vmax=255, interpolation='none')
+        if target is None:
+            plt.title(str(i))
+        else:
+            # Exibir o RMSE
+            plt.title(str(i) + ' (' + '{0:.2f}'.format(np.sqrt(np.mean(np.square(target - img)))) + ')')
+        frame = plt.gca()
+        frame.axes.get_xaxis().set_visible(False)
+        frame.axes.get_yaxis().set_visible(False)
+    plt.tight_layout()
+
+    
+# Parâmetros
+direcao = [1, -1]
+angulos = [0, 90, 180, 270]
+parametros = [[direcao, angulo] for direcao in direcao for angulo in angulos]
+
+
+# Testes
+def testar():
+    img = mpimg.imread('fractal.jpg')
+    img = imagemGreyscale(img)
+    img = reduzir(img, 4)
+    plt.figure()
+    plt.imshow(img, cmap='gray', interpolation='none')
+    transformacoes = compressao(img, 8, 4, 8)
+    iteracoes = descompressao(transformacoes, 8, 4, 8)
+    plotar_iteracoes(iteracoes, img)
+    plt.show()
+                    
+        
+if __name__ == '__main__':
+    testar()    
