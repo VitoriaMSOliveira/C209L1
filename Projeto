@@ -34,7 +34,7 @@ def girar(img, direcao):
 
 #Aplicar as alterações
 def aplicarMudanca(img, direcao, angulo, contraste=1.0, brilho=0.0):
-    return contraste*rotate(girar(img, direcao), angulo) + brilho
+    return contraste*rotacionar(girar(img, direcao), angulo) + brilho
 
 
 #Contraste e Brilho
